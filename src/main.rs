@@ -16,8 +16,10 @@ use tokio::fs as async_fs;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
-use chess_rs::{extract_game_type_from_event_string, extract_winner_from_result_string, ChessGame, GameType, TerminationType, Winner};
-
+use chess_rs::{
+    extract_game_type_from_event_string, extract_termination_type,
+    extract_winner_from_result_string, ChessGame, GameType, TerminationType, TimeControl, Winner,
+};
 
 /// Parse a single PGN game block into a [`ChessGame`] struct.
 ///
@@ -53,7 +55,7 @@ pub fn parse_pgn_game(pgn_text: &str) -> Option<ChessGame> {
     let black_player_name = headers.get("Black")?;
     let white_elo: i32 = headers.get("WhiteElo")?.parse().ok()?;
     let black_elo: i32 = headers.get("BlackElo")?.parse().ok()?;
-    let time_control = headers.get("TimeControl")?;
+    let time_control = TimeControl::from_str(headers.get("TimeControl")?).ok()?;
     let result = headers.get("Result")?;
     let utc_date_str = headers.get("UTCDate")?;
     let utc_time_str = headers.get("UTCTime")?;
@@ -65,12 +67,7 @@ pub fn parse_pgn_game(pgn_text: &str) -> Option<ChessGame> {
 
     // Determine winner and termination type.
     let winner = extract_winner_from_result_string(result);
-    // let (winner, termination_type) = match *result {
-    //     "1-0" => (Some(Winner::White.to_string(), "Normal".to_string())),
-    //     "0-1" => (Some("Black".to_string()), "Normal".to_string()),
-    //     "1/2-1/2" => (None, "Normal".to_string()),
-    //     _ => (None, "Time forfeit".to_string()),
-    // };
+    let termination_type = extract_termination_type(headers.get("Termination")?);
 
     // Parse date and time if available.
     let date = if *utc_date_str == "????.??.??" {
@@ -85,23 +82,25 @@ pub fn parse_pgn_game(pgn_text: &str) -> Option<ChessGame> {
         NaiveTime::parse_from_str(utc_time_str, "%H:%M:%S").ok()
     };
 
-    Some(ChessGame {
-        rated,
-        url: website.to_string(),
-        game_type: GameType::from_str(&game_type).unwrap(),
-        white_player_name: white_player_name.to_string(),
-        white_player_elo: white_elo as u32,
-        black_player_name: black_player_name.to_string(),
-        black_player_elo: black_elo as u32,
-        rating_diff: (white_elo - black_elo).abs(),
-        winner,
-        termination_type,
-        date,
-        time,
-        opening_name: opening.to_string(),
-        opening_eco: eco.to_string(),
-        game_id: Uuid::new_v4().to_string(),
-    })
+    Some(ChessGame::builder()
+        .rated(rated)
+        .url(website.to_string())
+        .game_type(game_type)
+        .time_control(time_control)
+        .white_player_name(white_player_name.to_string())
+        .white_player_elo(white_elo as u32)
+        .black_player_name(black_player_name.to_string())
+        .black_player_elo(black_elo as u32)
+        .rating_diff((white_elo - black_elo).abs() as i32)
+        .winner(winner)
+        .termination_type(termination_type)
+        .date(date)
+        .time(time)
+        .opening_name(opening.to_string())
+        .opening_eco(eco.to_string())
+        .game_id(Uuid::new_v4().to_string())
+        .build()
+        .expect("Failed to build ChessGame"))
 }
 
 /// Download a file asynchronously from a URL and save it to `output_path`.
@@ -173,90 +172,90 @@ pub fn parse_pgn_file(pgn_path: &str) -> Result<Vec<ChessGame>> {
     Ok(parsed_games)
 }
 
-/// Write a slice of [`ChessGame`] objects to a Parquet file using Polars.
-///
-/// # Arguments
-///
-/// * `games` - A slice of `ChessGame` objects.
-/// * `output_path` - The path for the output Parquet file.
-pub fn write_games_to_parquet(games: &[ChessGame], output_path: &str) -> Result<()> {
-    // Create vectors for each column.
-    let mut rated_vec = Vec::with_capacity(games.len());
-    let mut url_vec = Vec::with_capacity(games.len());
-    let mut game_type_vec = Vec::with_capacity(games.len());
-    let mut white_player_name_vec = Vec::with_capacity(games.len());
-    let mut white_player_elo_vec = Vec::with_capacity(games.len());
-    let mut black_player_name_vec = Vec::with_capacity(games.len());
-    let mut black_player_elo_vec = Vec::with_capacity(games.len());
-    let mut rating_diff_vec = Vec::with_capacity(games.len());
-    let mut winner_vec = Vec::with_capacity(games.len());
-    let mut termination_type_vec = Vec::with_capacity(games.len());
-    let mut date_vec = Vec::with_capacity(games.len());
-    let mut time_vec = Vec::with_capacity(games.len());
-    let mut opening_name_vec = Vec::with_capacity(games.len());
-    let mut opening_eco_vec = Vec::with_capacity(games.len());
-    let mut game_id_vec = Vec::with_capacity(games.len());
+// /// Write a slice of [`ChessGame`] objects to a Parquet file using Polars.
+// ///
+// /// # Arguments
+// ///
+// /// * `games` - A slice of `ChessGame` objects.
+// /// * `output_path` - The path for the output Parquet file.
+// pub fn write_games_to_parquet(games: &[ChessGame], output_path: &str) -> Result<()> {
+//     // Create vectors for each column.
+//     let mut rated_vec = Vec::with_capacity(games.len());
+//     let mut url_vec = Vec::with_capacity(games.len());
+//     let mut game_type_vec = Vec::with_capacity(games.len());
+//     let mut white_player_name_vec = Vec::with_capacity(games.len());
+//     let mut white_player_elo_vec = Vec::with_capacity(games.len());
+//     let mut black_player_name_vec = Vec::with_capacity(games.len());
+//     let mut black_player_elo_vec = Vec::with_capacity(games.len());
+//     let mut rating_diff_vec = Vec::with_capacity(games.len());
+//     let mut winner_vec = Vec::with_capacity(games.len());
+//     let mut termination_type_vec = Vec::with_capacity(games.len());
+//     let mut date_vec = Vec::with_capacity(games.len());
+//     let mut time_vec = Vec::with_capacity(games.len());
+//     let mut opening_name_vec = Vec::with_capacity(games.len());
+//     let mut opening_eco_vec = Vec::with_capacity(games.len());
+//     let mut game_id_vec = Vec::with_capacity(games.len());
 
-    for game in games {
-        rated_vec.push(game.rated);
-        url_vec.push(game.url.clone());
-        game_type_vec.push(game.game_type.clone());
-        white_player_name_vec.push(game.white_player_name.clone());
-        white_player_elo_vec.push(game.white_player_elo);
-        black_player_name_vec.push(game.black_player_name.clone());
-        black_player_elo_vec.push(game.black_player_elo);
-        rating_diff_vec.push(game.rating_diff);
-        winner_vec.push(game.winner.clone());
-        termination_type_vec.push(game.termination_type.clone());
-        // For simplicity, dates and times are stored as strings.
-        date_vec.push(game.date.map(|d| d.format("%Y-%m-%d").to_string()));
-        time_vec.push(game.time.map(|t| t.format("%H:%M:%S").to_string()));
-        opening_name_vec.push(game.opening_name.clone());
-        opening_eco_vec.push(game.opening_eco.clone());
-        game_id_vec.push(game.game_id.clone());
-    }
+//     for game in games {
+//         rated_vec.push(game.rated);
+//         url_vec.push(game.url.clone());
+//         game_type_vec.push(game.game_type.clone());
+//         white_player_name_vec.push(game.white_player_name.clone());
+//         white_player_elo_vec.push(game.white_player_elo);
+//         black_player_name_vec.push(game.black_player_name.clone());
+//         black_player_elo_vec.push(game.black_player_elo);
+//         rating_diff_vec.push(game.rating_diff);
+//         winner_vec.push(game.winner.clone());
+//         termination_type_vec.push(game.termination_type.clone());
+//         // For simplicity, dates and times are stored as strings.
+//         date_vec.push(game.date.map(|d| d.format("%Y-%m-%d").to_string()));
+//         time_vec.push(game.time.map(|t| t.format("%H:%M:%S").to_string()));
+//         opening_name_vec.push(game.opening_name.clone());
+//         opening_eco_vec.push(game.opening_eco.clone());
+//         game_id_vec.push(game.game_id.clone());
+//     }
 
-    // Build Series.
-    let s_rated = Series::new("rated", rated_vec);
-    let s_url = Series::new("url", url_vec);
-    let s_game_type = Series::new("game_type", game_type_vec);
-    let s_white_player_name = Series::new("white_player_name", white_player_name_vec);
-    let s_white_player_elo = Series::new("white_player_elo", white_player_elo_vec);
-    let s_black_player_name = Series::new("black_player_name", black_player_name_vec);
-    let s_black_player_elo = Series::new("black_player_elo", black_player_elo_vec);
-    let s_rating_diff = Series::new("rating_diff", rating_diff_vec);
-    let s_winner = Series::new("winner", winner_vec);
-    let s_termination_type = Series::new("termination_type", termination_type_vec);
-    let s_date = Series::new("date", date_vec);
-    let s_time = Series::new("time", time_vec);
-    let s_opening_name = Series::new("opening_name", opening_name_vec);
-    let s_opening_eco = Series::new("opening_eco", opening_eco_vec);
-    let s_game_id = Series::new("game_id", game_id_vec);
+//     // Build Series.
+//     let s_rated = Series::new("rated", rated_vec);
+//     let s_url = Series::new("url", url_vec);
+//     let s_game_type = Series::new("game_type", game_type_vec);
+//     let s_white_player_name = Series::new("white_player_name", white_player_name_vec);
+//     let s_white_player_elo = Series::new("white_player_elo", white_player_elo_vec);
+//     let s_black_player_name = Series::new("black_player_name", black_player_name_vec);
+//     let s_black_player_elo = Series::new("black_player_elo", black_player_elo_vec);
+//     let s_rating_diff = Series::new("rating_diff", rating_diff_vec);
+//     let s_winner = Series::new("winner", winner_vec);
+//     let s_termination_type = Series::new("termination_type", termination_type_vec);
+//     let s_date = Series::new("date", date_vec);
+//     let s_time = Series::new("time", time_vec);
+//     let s_opening_name = Series::new("opening_name", opening_name_vec);
+//     let s_opening_eco = Series::new("opening_eco", opening_eco_vec);
+//     let s_game_id = Series::new("game_id", game_id_vec);
 
-    // Create the DataFrame.
-    let mut df = DataFrame::new(vec![
-        s_rated,
-        s_url,
-        s_game_type,
-        s_white_player_name,
-        s_white_player_elo,
-        s_black_player_name,
-        s_black_player_elo,
-        s_rating_diff,
-        s_winner,
-        s_termination_type,
-        s_date,
-        s_time,
-        s_opening_name,
-        s_opening_eco,
-        s_game_id,
-    ])?;
+//     // Create the DataFrame.
+//     let mut df = DataFrame::new(vec![
+//         s_rated,
+//         s_url,
+//         s_game_type,
+//         s_white_player_name,
+//         s_white_player_elo,
+//         s_black_player_name,
+//         s_black_player_elo,
+//         s_rating_diff,
+//         s_winner,
+//         s_termination_type,
+//         s_date,
+//         s_time,
+//         s_opening_name,
+//         s_opening_eco,
+//         s_game_id,
+//     ])?;
 
-    // Write the DataFrame to a Parquet file.
-    let file = fs::File::create(output_path)?;
-    ParquetWriter::new(file).finish(&mut df)?;
-    Ok(())
-}
+//     // Write the DataFrame to a Parquet file.
+//     let file = fs::File::create(output_path)?;
+//     ParquetWriter::new(file).finish(&mut df)?;
+//     Ok(())
+// }
 
 /// Ensure that the folder structure for a given year and month exists.
 ///
@@ -307,10 +306,7 @@ pub async fn process_year_month(year: i32, month: i32) -> Result<()> {
     let pgn_path = format!("{}/{}-{:02}.pgn", work_dir, year, month);
 
     if !Path::new(&compressed_path).exists() {
-        println!(
-            "Downloading data from {} to {}",
-            url, compressed_path
-        );
+        println!("Downloading data from {} to {}", url, compressed_path);
         download_file(&url, &compressed_path).await?;
         println!("Download completed.");
     } else {
@@ -339,7 +335,7 @@ pub async fn process_year_month(year: i32, month: i32) -> Result<()> {
             work_dir, year, month, file_counter
         );
         println!("Writing {} games to {}", chunk.len(), parquet_path);
-        write_games_to_parquet(chunk, &parquet_path)?;
+        // write_games_to_parquet(chunk, &parquet_path)?;
     }
 
     println!("Finished processing data for {}/{}", year, month);
@@ -409,9 +405,9 @@ mod tests {
         assert_eq!(game.white_player_elo, 1525);
         assert_eq!(game.black_player_elo, 1458);
         assert_eq!(game.rating_diff, 67);
-        assert_eq!(game.game_type, "60+0");
-        assert_eq!(game.winner, Some("Black".to_string()));
-        assert_eq!(game.termination_type, "Normal".to_string());
+        assert_eq!(game.game_type, GameType::Bullet);
+        assert_eq!(game.winner, Some(Winner::Black));
+        assert_eq!(game.termination_type, TerminationType::TimeForfeit);
         assert_eq!(
             game.date.unwrap().format("%Y.%m.%d").to_string(),
             "2014.06.30"

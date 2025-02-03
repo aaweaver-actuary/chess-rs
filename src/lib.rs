@@ -88,12 +88,41 @@ impl Display for GameType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeControl(u32, u32);
+
+impl TimeControl {
+    pub fn new(minutes: u32, increment: u32) -> Self {
+        Self(minutes, increment)
+    }
+}
+
+impl Display for TimeControl {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}+{}", self.0, self.1)
+    }
+}
+
+impl FromStr for TimeControl {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split('+').collect();
+        if parts.len() != 2 {
+            return Err(());
+        }
+        let minutes = parts[0].parse().map_err(|_| ())?;
+        let increment = parts[1].parse().map_err(|_| ())?;
+        Ok(Self(minutes, increment))
+    }
+}
+
 /// A chess game with header information.
 #[derive(Debug, Clone, Builder, PartialEq)]
 pub struct ChessGame {
     pub rated: bool,
     pub url: String,
     pub game_type: GameType,
+    pub time_control: TimeControl,
     pub white_player_name: String,
     pub white_player_elo: u32,
     pub black_player_name: String,
@@ -110,8 +139,14 @@ pub struct ChessGame {
     pub game_id: String,
 }
 
+impl ChessGame {
+    pub fn builder() -> ChessGameBuilder {
+        ChessGameBuilder::default()
+    }
+}
+
 /// Extract game type (eg "Bullet", "Blitz", "Rapid", "Classical") from the event string.
-pub fn extract_game_type_from_event_string(event: &str) -> String {
+pub fn extract_game_type_from_event_string(event: &str) -> GameType {
     let out: String;
 
     if event.to_lowercase().contains("bullet") {
@@ -125,7 +160,7 @@ pub fn extract_game_type_from_event_string(event: &str) -> String {
     } else {
         out = format!("Unknown ({})", event).as_str().to_owned();
     }
-    out
+    GameType::from_str(&out).expect("Invalid game type")
 }
 
 /// Extract winner from result string, White, Black or None for a draw.
@@ -135,6 +170,14 @@ pub fn extract_winner_from_result_string(result: &str) -> Option<Winner> {
         "0-1" => Some(Winner::Black),
         "1/2-1/2" => None,
         _ => None,
+    }
+}
+
+pub fn extract_termination_type(termination: &str) -> TerminationType {
+    match termination.to_lowercase().as_str() {
+        "normal" => TerminationType::Normal,
+        "time forfeit" => TerminationType::TimeForfeit,
+        _ => panic!("Invalid termination type"),
     }
 }
 
@@ -190,12 +233,10 @@ mod tests {
 
     #[test]
     fn test_extract_game_type_from_event_string() {
-        assert_eq!(extract_game_type_from_event_string("Bullet"), "Bullet");
-        assert_eq!(extract_game_type_from_event_string("Blitz"), "Blitz");
-        assert_eq!(extract_game_type_from_event_string("Rapid"), "Rapid");
-        assert_eq!(extract_game_type_from_event_string("Classical"), "Classical");
-        assert_eq!(extract_game_type_from_event_string("invalid"), "Unknown (invalid)");
-
+        assert_eq!(extract_game_type_from_event_string("a bullet game"), GameType::Bullet);
+        assert_eq!(extract_game_type_from_event_string("Blitz"), GameType::Blitz);
+        assert_eq!(extract_game_type_from_event_string("RAPID"), GameType::Rapid);
+        assert_eq!(extract_game_type_from_event_string("Classical GAME"), GameType::Classical);
     }
 
     #[test]
@@ -206,5 +247,17 @@ mod tests {
         assert_eq!(extract_winner_from_result_string("invalid"), None);
     }
         
+    #[test]
+    fn test_extract_termination_type() {
+        assert_eq!(extract_termination_type("normal"), TerminationType::Normal);
+        assert_eq!(extract_termination_type("time forfeit"), TerminationType::TimeForfeit);
+    }
+
+    #[test]
+    fn test_time_control_from_str() {
+        assert_eq!(TimeControl::from_str("5+5"), Ok(TimeControl(5, 5)));
+        assert_eq!(TimeControl::from_str("5+invalid"), Err(()));
+        assert_eq!(TimeControl::from_str("invalid"), Err(()));
+    }
    
 }
